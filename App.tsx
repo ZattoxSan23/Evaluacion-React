@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, Text, StyleSheet, Button } from 'react-native';
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import LoginScreen from './app/screens/LoginScreen';
 import AdminDashboard from './app/screens/AdminDashboard';
@@ -9,169 +10,118 @@ import TrainerDashboard from './app/screens/TrainerDashboard';
 import ClientDashboard from './app/screens/ClientDashboard';
 
 const Stack = createNativeStackNavigator();
+type Role = 'admin' | 'trainer' | 'client';
+type RoleResult = { userId: string; role: Role | null; error: string | null };
+const isRole = (value: unknown): value is Role =>
+  value === 'admin' || value === 'trainer' || value === 'client';
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const [checkingRole, setCheckingRole] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [roleResult, setRoleResult] = useState<RoleResult | null>(null);
+  const userId = session?.user.id;
 
   useEffect(() => {
-    checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event);
-      setSession(session);
-      
-      // Resetear estado
-      setUserRole(null);
-      setCheckingRole(true);
-      
-      if (session) {
-        console.log('🔄 Obteniendo rol para usuario:', session.user.email);
-        await checkUserRole(session.user.id);
-      } else {
-        setCheckingRole(false);
-      }
-      
+    let active = true;
+    let authEventSeen = false;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
+      authEventSeen = true;
+      // Keep the auth callback synchronous: profile queries run in a separate effect.
+      setSession(nextSession);
+      setSessionError(null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    void supabase.auth.getSession().then(({ data, error }) => {
+      // A newer auth event must win over the startup snapshot.
+      if (!active || authEventSeen) return;
+      setSession(data.session);
+      setSessionError(error ? 'No se pudo recuperar la sesión.' : null);
+      setLoading(false);
+    }).catch(() => {
+      if (!active || authEventSeen) return;
+      setSessionError('No se pudo recuperar la sesión.');
+      setLoading(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const checkSession = async () => {
-    try {
-      console.log('🔍 Verificando sesión activa...');
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session) {
-        console.log('✅ Sesión encontrada:', session.user.email);
-        setCheckingRole(true);
-        await checkUserRole(session.user.id);
-      } else {
-        console.log('⚠️ No hay sesión activa');
-        setCheckingRole(false);
+  useEffect(() => {
+    let active = true;
+    setRoleResult(null);
+    if (!userId) return () => { active = false; };
+
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .single();
+        if (!active) return;
+        const role = data?.role;
+        setRoleResult({
+          userId,
+          role: !error && isRole(role) ? role : null,
+          error: error || !isRole(role)
+            ? 'No se pudo verificar tu perfil. Contacta al administrador.'
+            : null,
+        });
+      } catch {
+        if (active) setRoleResult({ userId, role: null, error: 'No se pudo verificar tu perfil.' });
       }
-      
-      setSession(session);
-    } catch (error) {
-      console.error('❌ Error checking session:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    })();
 
-  const checkUserRole = async (userId: string) => {
-    try {
-      console.log('🎭 Verificando rol del usuario...');
-      
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', userId)
-        .single();
+    // Discard a previous user's delayed response after sign-out or account changes.
+    return () => { active = false; };
+  }, [userId]);
 
-      if (error) {
-        console.error('❌ Error obteniendo rol:', error);
-        // No asignar rol por defecto
-        setUserRole(null);
-      } else if (data) {
-        console.log('✅ Rol obtenido:', data.role);
-        setUserRole(data.role);
-      }
-    } catch (error) {
-      console.error('❌ Error en checkUserRole:', error);
-      setUserRole(null);
-    } finally {
-      setCheckingRole(false);
-    }
-  };
-
-  // Determinar qué pantalla mostrar
-  const getCurrentScreen = () => {
-    console.log('📱 Determinando pantalla:', {
-      loading,
-      checkingRole,
-      session: !!session,
-      userRole
-    });
-
-    // 1. Carga inicial
-    if (loading) {
-      return 'loading';
-    }
-
-    // 2. Sin sesión
-    if (!session) {
-      return 'login';
-    }
-
-    // 3. Con sesión pero verificando rol
-    if (checkingRole) {
-      return 'checking_role';
-    }
-
-    // 4. Con sesión y rol definido
-    if (userRole) {
-      return userRole;
-    }
-
-    // 5. Con sesión pero sin rol (fallback)
-    return 'login';
-  };
-
-  const currentScreen = getCurrentScreen();
-
-  console.log('🎯 Pantalla actual:', currentScreen);
-
-  // Renderizado
-  if (currentScreen === 'loading') {
+  if (loading || (userId && roleResult?.userId !== userId)) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color="#FFD700" />
-        <Text style={styles.loadingText}>Inicializando...</Text>
+        <Text style={styles.loadingText}>{loading ? 'Inicializando...' : 'Verificando permisos...'}</Text>
       </View>
     );
   }
 
-  if (currentScreen === 'checking_role') {
+  const error = sessionError || (userId ? roleResult?.error : null);
+  if (error) {
     return (
       <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#FFD700" />
-        <Text style={styles.loadingText}>Verificando permisos...</Text>
+        <Text accessibilityRole="alert" style={styles.loadingText}>{error}</Text>
+        <Button title="Volver al inicio de sesión" onPress={() => {
+          void supabase.auth.signOut().then(({ error: signOutError }) => {
+            if (!signOutError) {
+              setSession(null);
+              setSessionError(null);
+              setRoleResult(null);
+            }
+          }).catch(() => setSessionError('No se pudo cerrar la sesión. Intenta nuevamente.'));
+        }} />
       </View>
     );
   }
 
   return (
     <NavigationContainer>
-      <Stack.Navigator>
-        {currentScreen === 'login' ? (
-          <Stack.Screen 
-            name="Login" 
-            component={LoginScreen}
-            options={{ headerShown: false }}
-          />
-        ) : currentScreen === 'admin' ? (
-          <Stack.Screen 
-            name="AdminDashboard" 
-            component={AdminDashboard}
-            options={{ headerShown: false }}
-          />
-        ) : currentScreen === 'trainer' ? (
-          <Stack.Screen 
-            name="TrainerDashboard" 
-            component={TrainerDashboard}
-            options={{ headerShown: false }}
-          />
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {!session ? (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        ) : roleResult?.role === 'admin' ? (
+          <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
+        ) : roleResult?.role === 'trainer' ? (
+          <Stack.Screen name="TrainerDashboard" component={TrainerDashboard} />
+        ) : roleResult?.role === 'client' ? (
+          <Stack.Screen name="ClientDashboard" component={ClientDashboard} />
         ) : (
-          // Solo llega aquí si userRole === 'client'
-          <Stack.Screen 
-            name="ClientDashboard" 
-            component={ClientDashboard}
-            options={{ headerShown: false }}
-          />
+          <Stack.Screen name="Login" component={LoginScreen} />
         )}
       </Stack.Navigator>
     </NavigationContainer>
@@ -180,16 +130,8 @@ export default function App() {
 
 const styles = StyleSheet.create({
   centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#000000',
-    padding: 20,
+    flex: 1, justifyContent: 'center', alignItems: 'center',
+    backgroundColor: '#000000', padding: 20, gap: 16,
   },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#FFD700',
-    fontWeight: 'bold',
-  },
+  loadingText: { marginTop: 10, fontSize: 16, color: '#FFD700', fontWeight: 'bold' },
 });

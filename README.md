@@ -1,3 +1,46 @@
+# Imperio Gym — aplicación Expo
+
+Aplicación React Native con Expo, TypeScript y Supabase para administración, entrenadores y clientes. El repositorio `Evaluacion-Flutter` es otra implementación; no se asume que usen la misma base de datos.
+
+## Ejecutar
+
+```sh
+npm ci
+npm start
+# Alternativas:
+npm run android
+npm run ios
+npm run web
+npm run typecheck
+```
+
+Requiere Node.js compatible con Expo SDK 54 y un emulador o dispositivo compatible. `ios` requiere macOS para el simulador.
+
+## Autenticación y navegación
+
+`App.tsx` mantiene la sesión y consulta `profiles.role` por ID de usuario. Solo admite `admin`, `trainer` y `client`. Un rol desconocido no se convierte automáticamente en cliente.
+
+La consulta de perfil corre fuera del callback de autenticación. Las respuestas atrasadas se descartan al cambiar de cuenta o desmontar el componente. La navegación por rol es presentación: las políticas RLS de Supabase deben imponer los mismos límites de acceso en datos.
+
+`lib/supabase.ts` conserva la configuración pública existente. La clave anon no reemplaza las políticas de autorización; nunca debe sustituirse por una clave service role en una app móvil. El esquema y las políticas de la instancia aún no se versionan en este repositorio.
+
+## Estructura
+
+| Ruta | Responsabilidad |
+| --- | --- |
+| `app/screens/` | pantallas por rol |
+| `app/components/VideoPlayer.tsx` | reproducción de ejercicios |
+| `lib/bodyMetrics.ts` | cálculos y estimaciones corporales |
+| `lib/supabase.ts` | cliente de datos |
+
+## Estado y pendientes
+
+Prototipo con pantallas de gestión deportiva. Faltan esquema y datos de demostración reproducibles, pruebas de integración de sesión/roles, almacenamiento persistente de sesión apropiado a cada plataforma y separación de consultas respecto de pantallas grandes. No hay enlace de despliegue web confirmado.
+
+Las métricas corporales son estimaciones: algunas usan reglas aproximadas y no se deben presentar como mediciones clínicas. Antes de promover este módulo se necesita revisar sus fórmulas, unidades, entradas incompletas y mensajes.
+
+## Capturas existentes
+
 <img width="444" height="764" alt="image" src="https://github.com/user-attachments/assets/da35f4ca-2a9c-43f7-9d13-cfea37b7d517" />
 
 
